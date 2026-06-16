@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.LocationOn
@@ -23,10 +24,10 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -142,42 +143,49 @@ fun PlacesScreen(vm: StationsViewModel) {
                 FuelGradeSelector(fuelGrade) { vm.setFuelGrade(it) }
             }
 
-            // A refresh in flight while we already have cached results: flag the
-            // list as stale (banner + progress bar + dimmed) rather than hiding it.
-            val refreshingOverCache = refreshing && places.isNotEmpty()
-
-            if (refreshing && places.isEmpty()) {
-                Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-            } else if (places.isEmpty()) {
-                CenterMessage(
-                    if (!hasPermission) "Location permission is needed to find nearby places."
-                    else error ?: "No ${category.lowercase()} places cached yet. Tap refresh."
-                )
-            } else {
-                if (refreshingOverCache) {
-                    Text(
-                        "Updating \u2014 showing cached results\u2026",
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                }
-                error?.let {
-                    Text(
-                        "Showing cached data \u2014 $it",
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-                LazyColumn(
-                    Modifier
-                        .fillMaxSize()
-                        .alpha(if (refreshingOverCache) 0.5f else 1f)
-                ) {
-                    items(places, key = { it.stationId }) { p ->
-                        PlaceCard(p, isGas = isGas, onReport = { reportFor = p })
+            // Pull-to-refresh wraps the results area: dragging down triggers a
+            // refresh, and the indicator reflects ANY refresh (pull, the toolbar
+            // button, or the periodic auto-refresh).
+            PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = { if (hasPermission) vm.refresh() },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                if (places.isEmpty()) {
+                    // Make the empty/first-load state scrollable so the pull
+                    // gesture works even with no items \u2014 empty is exactly when
+                    // you want to pull to refresh.
+                    Box(
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        when {
+                            refreshing -> CircularProgressIndicator()
+                            else -> Text(
+                                if (!hasPermission)
+                                    "Location permission is needed to find nearby places."
+                                else error
+                                    ?: "No ${category.lowercase()} places cached yet. Pull down to refresh.",
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(24.dp)
+                            )
+                        }
+                    }
+                } else {
+                    Column(Modifier.fillMaxSize()) {
+                        error?.let {
+                            Text(
+                                "Showing cached data \u2014 $it",
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            items(places, key = { it.stationId }) { p ->
+                                PlaceCard(p, isGas = isGas, onReport = { reportFor = p })
+                            }
+                        }
                     }
                 }
             }
@@ -433,13 +441,6 @@ fun AddPlaceDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
-}
-
-@Composable
-fun CenterMessage(msg: String) {
-    Box(Modifier.fillMaxSize().padding(24.dp), Alignment.Center) {
-        Text(msg, style = MaterialTheme.typography.bodyLarge)
-    }
 }
 
 private fun formatDistance(meters: Double): String {
