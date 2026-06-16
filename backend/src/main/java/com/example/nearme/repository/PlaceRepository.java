@@ -102,9 +102,18 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                                        @Param("limit") int limit);
 
     /**
-     * Nearest places of a category within {radiusMeters} of (lon,lat), with the
-     * most recent non-stale price for the requested priceType. PostGIS:
-     * ST_DWithin filters by radius (index-assisted), ST_Distance orders.
+     * Nearest places of a category within {radiusMeters} of (lon,lat), with a
+     * gas price computed crowd-first per station. PostGIS: ST_DWithin filters by
+     * radius (index-assisted), ST_Distance orders.
+     *
+     * The price (GAS only) cascades, newest-comparable wins:
+     *   1. median of THIS station's own recent non-stale user reports
+     *      (excludes the EIA seed) -> a real crowdsourced price ('crowd');
+     *   2. else the median of recent user reports at OTHER gas stations within
+     *      {estimateRadiusMeters} -> a local crowd estimate ('crowd-local');
+     *   3. else the seeded EIA regional average ('eia-avg') -> regional estimate.
+     * Medians are robust to the suspicious-but-accepted reports the report-time
+     * OutlierGuard lets through. Rounded to mills (3 dp) to keep the $x.xx9 form.
      */
     @Query(value = """
             SELECT p.id              AS id,
@@ -117,16 +126,52 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                    ST_X(p.location::geometry) AS lon,
                    ST_Distance(p.location, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography) AS distance_m,
                    lp.price          AS price,
-                   lp.reported_at    AS price_reported_at
+                   lp.reported_at    AS price_reported_at,
+                   lp.reporter       AS price_reporter
             FROM place p
             LEFT JOIN LATERAL (
-                SELECT pr.price, pr.reported_at
-                FROM price_report pr
-                WHERE pr.place_id = p.id
-                  AND pr.price_type = :priceType
-                  AND pr.reported_at > now() - (:maxAgeHours || ' hours')::interval
-                ORDER BY pr.reported_at DESC
-                LIMIT 1
+                SELECT CASE WHEN own.median   IS NOT NULL THEN own.median
+                            WHEN local.median IS NOT NULL THEN local.median
+                            ELSE eia.price END                          AS price,
+                       CASE WHEN own.median   IS NOT NULL THEN own.latest_at
+                            WHEN local.median IS NOT NULL THEN local.latest_at
+                            ELSE eia.reported_at END                    AS reported_at,
+                       CASE WHEN own.median   IS NOT NULL THEN 'crowd'
+                            WHEN local.median IS NOT NULL THEN 'crowd-local'
+                            ELSE eia.reporter_id END                    AS reporter
+                FROM
+                    -- 1. this station's own crowdsourced reports
+                    (SELECT round((percentile_cont(0.5) WITHIN GROUP (ORDER BY pr.price::double precision))::numeric, 3) AS median,
+                            max(pr.reported_at) AS latest_at
+                     FROM price_report pr
+                     WHERE pr.place_id = p.id
+                       AND pr.price_type = :priceType
+                       AND pr.reporter_id <> :eiaSource
+                       AND pr.reported_at > now() - (:maxAgeHours || ' hours')::interval) own
+                CROSS JOIN
+                    -- 2. nearby stations' crowdsourced reports (gas only)
+                    (SELECT round((percentile_cont(0.5) WITHIN GROUP (ORDER BY pr.price::double precision))::numeric, 3) AS median,
+                            max(pr.reported_at) AS latest_at
+                     FROM price_report pr
+                     JOIN place op ON op.id = pr.place_id
+                     WHERE :category = 'GAS'
+                       AND op.category = 'GAS'
+                       AND pr.place_id <> p.id
+                       AND pr.price_type = :priceType
+                       AND pr.reporter_id <> :eiaSource
+                       AND pr.reported_at > now() - (:maxAgeHours || ' hours')::interval
+                       AND ST_DWithin(op.location, p.location, :estimateRadiusMeters)) local
+                LEFT JOIN LATERAL (
+                    -- 3. seeded regional average for this station
+                    SELECT pr.price, pr.reported_at, pr.reporter_id
+                    FROM price_report pr
+                    WHERE pr.place_id = p.id
+                      AND pr.price_type = :priceType
+                      AND pr.reporter_id = :eiaSource
+                      AND pr.reported_at > now() - (:maxAgeHours || ' hours')::interval
+                    ORDER BY pr.reported_at DESC
+                    LIMIT 1
+                ) eia ON true
             ) lp ON true
             WHERE p.category = :category
               AND ST_DWithin(p.location, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, :radiusMeters)
@@ -139,6 +184,8 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
                                     @Param("radiusMeters") double radiusMeters,
                                     @Param("priceType") String priceType,
                                     @Param("maxAgeHours") int maxAgeHours,
+                                    @Param("estimateRadiusMeters") double estimateRadiusMeters,
+                                    @Param("eiaSource") String eiaSource,
                                     @Param("limit") int limit);
 
     interface NearbyPlaceRow {
@@ -153,5 +200,12 @@ public interface PlaceRepository extends JpaRepository<Place, Long> {
         double getDistanceM();
         java.math.BigDecimal getPrice();
         java.time.Instant getPriceReportedAt();
+        /**
+         * Source of the computed price (null if none): "crowd" = median of this
+         * station's own user reports (a real crowdsourced price); "crowd-local" =
+         * median of nearby stations' reports (a local estimate); "eia-avg" = the
+         * seeded regional average (a regional estimate).
+         */
+        String getPriceReporter();
     }
 }

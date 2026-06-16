@@ -1,9 +1,31 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp") version "2.0.0-1.0.21"
 }
+
+// Release signing credentials live in android/keystore.properties (gitignored).
+// Absent on a fresh checkout/CI — the release build then stays unsigned instead
+// of failing, so a clone without the secret still compiles.
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) FileInputStream(keystorePropsFile).use { load(it) }
+}
+
+// Public base URL the release build talks to. Defaults to the DDNS host; override
+// without editing source via -PapiBaseUrl=... (e.g. a Cloudflare Tunnel URL).
+// The debug build ignores this and uses the emulator host alias (see below).
+val apiBaseUrl = (project.findProperty("apiBaseUrl") as String?) ?: "https://danovich.ddns.net"
+
+// Stable anchor the app re-reads to discover the current (ephemeral) tunnel URL
+// when a request can't reach the backend. The tunnel host publishes the live URL
+// here (see deploy/tunnel.sh). Override with -PtunnelDiscoveryUrl=...
+val tunnelDiscoveryUrl = (project.findProperty("tunnelDiscoveryUrl") as String?)
+    ?: "https://raw.githubusercontent.com/sdanovich/nearme/tunnel-url/url.txt"
 
 android {
     namespace = "com.example.nearme"
@@ -16,20 +38,39 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        // Backend base URL. The backend runs at home and is reached over DDNS so
-        // a real phone can connect from anywhere. For local emulator testing,
-        // override with "http://10.0.2.2:28085" (10.0.2.2 = host from the emulator).
-        // No trailing slash — all endpoint paths in NearMeApi start with "/".
-        buildConfigField("String", "API_BASE_URL", "\"http://danovich.ddns.net:28085\"")
+        // Backend base URL (host root). All NearMeApi endpoint paths start with
+        // "/api/...", so the effective URL is "<base>/api/...". Release talks to
+        // the public HTTPS host (reverse-proxied to the backend); debug overrides
+        // to the emulator's host alias over plain HTTP. No trailing slash.
+        buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
+        buildConfigField("String", "TUNNEL_DISCOVERY_URL", "\"$tunnelDiscoveryUrl\"")
+        // Shared secret exchanged at POST /api/auth/token for a JWT. MUST match
+        // the backend's nearme.auth.client-secret. CHANGE for production.
+        buildConfigField("String", "AUTH_CLIENT_SECRET", "\"0c9409b5007fae96b09d257d2216762f199e2efd2272ac99\"")
+    }
+
+    signingConfigs {
+        create("release") {
+            if (keystorePropsFile.exists()) {
+                storeFile = rootProject.file(keystoreProps["storeFile"] as String)
+                storePassword = keystoreProps["storePassword"] as String
+                keyAlias = keystoreProps["keyAlias"] as String
+                keyPassword = keystoreProps["keyPassword"] as String
+            }
+        }
     }
 
     buildTypes {
         debug {
             // Emulator testing: 10.0.2.2 is the host machine as seen from the AVD.
-            buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:28085\"")
+            buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:28585\"")
         }
         release {
             isMinifyEnabled = false
+            // Sign with the release key when credentials are present (see above).
+            if (keystorePropsFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
@@ -74,4 +115,8 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+
+    // Unit tests (JVM)
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

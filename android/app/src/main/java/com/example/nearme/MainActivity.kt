@@ -1,18 +1,22 @@
 package com.example.nearme
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.LocationOn
@@ -20,13 +24,14 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -138,42 +143,49 @@ fun PlacesScreen(vm: StationsViewModel) {
                 FuelGradeSelector(fuelGrade) { vm.setFuelGrade(it) }
             }
 
-            // A refresh in flight while we already have cached results: flag the
-            // list as stale (banner + progress bar + dimmed) rather than hiding it.
-            val refreshingOverCache = refreshing && places.isNotEmpty()
-
-            if (refreshing && places.isEmpty()) {
-                Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-            } else if (places.isEmpty()) {
-                CenterMessage(
-                    if (!hasPermission) "Location permission is needed to find nearby places."
-                    else error ?: "No ${category.lowercase()} places cached yet. Tap refresh."
-                )
-            } else {
-                if (refreshingOverCache) {
-                    Text(
-                        "Updating \u2014 showing cached results\u2026",
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                }
-                error?.let {
-                    Text(
-                        "Showing cached data \u2014 $it",
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-                LazyColumn(
-                    Modifier
-                        .fillMaxSize()
-                        .alpha(if (refreshingOverCache) 0.5f else 1f)
-                ) {
-                    items(places, key = { it.stationId }) { p ->
-                        PlaceCard(p, isGas = isGas, onReport = { reportFor = p })
+            // Pull-to-refresh wraps the results area: dragging down triggers a
+            // refresh, and the indicator reflects ANY refresh (pull, the toolbar
+            // button, or the periodic auto-refresh).
+            PullToRefreshBox(
+                isRefreshing = refreshing,
+                onRefresh = { if (hasPermission) vm.refresh() },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                if (places.isEmpty()) {
+                    // Make the empty/first-load state scrollable so the pull
+                    // gesture works even with no items \u2014 empty is exactly when
+                    // you want to pull to refresh.
+                    Box(
+                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        when {
+                            refreshing -> CircularProgressIndicator()
+                            else -> Text(
+                                if (!hasPermission)
+                                    "Location permission is needed to find nearby places."
+                                else error
+                                    ?: "No ${category.lowercase()} places cached yet. Pull down to refresh.",
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.padding(24.dp)
+                            )
+                        }
+                    }
+                } else {
+                    Column(Modifier.fillMaxSize()) {
+                        error?.let {
+                            Text(
+                                "Showing cached data \u2014 $it",
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        LazyColumn(Modifier.fillMaxSize()) {
+                            items(places, key = { it.stationId }) { p ->
+                                PlaceCard(p, isGas = isGas, onReport = { reportFor = p })
+                            }
+                        }
                     }
                 }
             }
@@ -245,6 +257,7 @@ fun FuelGradeSelector(selected: String, onSelect: (String) -> Unit) {
 
 @Composable
 fun PlaceCard(p: CachedPlace, isGas: Boolean, onReport: () -> Unit) {
+    val context = LocalContext.current
     ElevatedCard(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Row(
             Modifier.fillMaxWidth().padding(16.dp),
@@ -268,17 +281,53 @@ fun PlaceCard(p: CachedPlace, isGas: Boolean, onReport: () -> Unit) {
                 p.openingHours?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall)
                 }
-                p.address?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                // Tappable address: opens the spot in Google Maps (uses the exact
+                // coordinates, so it works even when the address text is fuzzy).
+                p.address?.let { addr ->
+                    Text(
+                        addr,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        textDecoration = TextDecoration.Underline,
+                        modifier = Modifier.clickable {
+                            val uri = Uri.parse(
+                                "https://www.google.com/maps/search/?api=1&query=" +
+                                        "${p.latitude},${p.longitude}"
+                            )
+                            context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                        }
+                    )
+                }
             }
             // Price column ONLY for gas.
             if (isGas) {
+                val hasPrice = p.price != null
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        if (p.price != null) "$${"%.2f".format(p.price)}" else "\u2014",
+                        if (hasPrice) "$${"%.2f".format(p.price)}" else "\u2014",
                         style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        // Dim seeded estimates so real community reports stand out.
+                        color = if (hasPrice && !p.crowdsourced)
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onSurface
                     )
-                    Text(priceAge(p.priceReportedAt), style = MaterialTheme.typography.labelSmall)
+                    if (hasPrice) {
+                        if (p.crowdsourced) {
+                            Text(
+                                "reported ${priceAge(p.priceReportedAt)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium
+                            )
+                        } else {
+                            Text(
+                                "est. average",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                     TextButton(onClick = onReport) { Text("Report") }
                 }
             }
@@ -392,13 +441,6 @@ fun AddPlaceDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
-}
-
-@Composable
-fun CenterMessage(msg: String) {
-    Box(Modifier.fillMaxSize().padding(24.dp), Alignment.Center) {
-        Text(msg, style = MaterialTheme.typography.bodyLarge)
-    }
 }
 
 private fun formatDistance(meters: Double): String {

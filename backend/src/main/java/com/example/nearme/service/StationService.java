@@ -29,6 +29,12 @@ public class StationService {
     private final PlaceDiscoveryService discoveryService;
     private final FuelPriceService fuelPriceService;
 
+    /** Radius for the nearby-stations crowd price estimate when a station has no
+     *  reports of its own (step 2 of the price cascade). */
+    static final double PRICE_ESTIMATE_RADIUS_M = 8000;
+    /** Price-source marker the nearby query returns for a real crowdsourced price. */
+    static final String CROWD_SOURCE = "crowd";
+
     public StationService(PlaceRepository placeRepo,
                           PriceReportRepository reportRepo,
                           GeometryFactory geometryFactory,
@@ -59,13 +65,20 @@ public class StationService {
             fuelPriceService.seedAverages(priceType, lat, lon, radiusMeters, maxAgeHours);
         }
 
-        return placeRepo.findNearby(lon, lat, category.name(), radiusMeters, priceType, maxAgeHours, limit)
+        return placeRepo.findNearby(lon, lat, category.name(), radiusMeters, priceType,
+                        maxAgeHours, PRICE_ESTIMATE_RADIUS_M, FuelPriceService.SOURCE, limit)
                 .stream()
-                .map(r -> new NearbyStationResponse(
-                        r.getId(), r.getName(), r.getBrand(), r.getAddress(),
-                        r.getLat(), r.getLon(), r.getDistanceM(),
-                        r.getRating(), r.getOpeningHours(),
-                        r.getPrice(), r.getPriceReportedAt()))
+                .map(r -> {
+                    // A price is "real" (crowdsourced) only when it's the median of
+                    // THIS station's own reports; the nearby-stations and EIA
+                    // estimates are dimmed by the client.
+                    boolean crowdsourced = CROWD_SOURCE.equals(r.getPriceReporter());
+                    return new NearbyStationResponse(
+                            r.getId(), r.getName(), r.getBrand(), r.getAddress(),
+                            r.getLat(), r.getLon(), r.getDistanceM(),
+                            r.getRating(), r.getOpeningHours(),
+                            r.getPrice(), r.getPriceReportedAt(), crowdsourced);
+                })
                 .toList();
     }
 

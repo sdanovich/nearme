@@ -75,9 +75,10 @@ class StationServiceTest {
         when(row.getPrice()).thenReturn(new BigDecimal("3.99"));
         Instant when = Instant.parse("2026-06-16T00:00:00Z");
         when(row.getPriceReportedAt()).thenReturn(when);
+        when(row.getPriceReporter()).thenReturn("crowd"); // median of this station's own reports
 
         when(placeRepo.findNearby(anyDouble(), anyDouble(), anyString(), anyDouble(),
-                anyString(), anyInt(), anyInt())).thenReturn(List.of(row));
+                anyString(), anyInt(), anyDouble(), anyString(), anyInt())).thenReturn(List.of(row));
 
         List<NearbyStationResponse> out = service.findNearby(
                 37.42, -122.08, PlaceCategory.GAS, "REGULAR", 5000, 48, 20);
@@ -91,18 +92,49 @@ class StationServiceTest {
         assertThat(r.distanceMeters()).isCloseTo(123.4, within(1e-9));
         assertThat(r.price()).isEqualByComparingTo("3.99");
         assertThat(r.priceReportedAt()).isEqualTo(when);
+        assertThat(r.crowdsourced()).isTrue();
 
         // discovery always runs first; GAS also seeds averages
         verify(discoveryService).discover(37.42, -122.08, PlaceCategory.GAS, 5000);
         verify(fuelPriceService).seedAverages("REGULAR", 37.42, -122.08, 5000, 48);
-        // repository called with (lon, lat, category, ...) order
-        verify(placeRepo).findNearby(-122.08, 37.42, "GAS", 5000, "REGULAR", 48, 20);
+        // repository called with (lon, lat, category, ...) order, plus the price
+        // estimate radius and EIA source marker the service supplies
+        verify(placeRepo).findNearby(-122.08, 37.42, "GAS", 5000, "REGULAR", 48,
+                StationService.PRICE_ESTIMATE_RADIUS_M, FuelPriceService.SOURCE, 20);
+    }
+
+    @Test
+    void seededAveragePriceIsNotMarkedCrowdsourced() {
+        PlaceRepository.NearbyPlaceRow row = mock(PlaceRepository.NearbyPlaceRow.class);
+        when(row.getPrice()).thenReturn(new BigDecimal("3.50"));
+        when(row.getPriceReporter()).thenReturn(FuelPriceService.SOURCE); // "eia-avg"
+        when(placeRepo.findNearby(anyDouble(), anyDouble(), anyString(), anyDouble(),
+                anyString(), anyInt(), anyDouble(), anyString(), anyInt())).thenReturn(List.of(row));
+
+        List<NearbyStationResponse> out = service.findNearby(
+                37.42, -122.08, PlaceCategory.GAS, "REGULAR", 5000, 48, 20);
+
+        assertThat(out.get(0).crowdsourced()).isFalse();
+    }
+
+    @Test
+    void nearbyCrowdEstimateIsNotMarkedCrowdsourced() {
+        PlaceRepository.NearbyPlaceRow row = mock(PlaceRepository.NearbyPlaceRow.class);
+        when(row.getPrice()).thenReturn(new BigDecimal("4.10"));
+        when(row.getPriceReporter()).thenReturn("crowd-local"); // median of nearby stations
+        when(placeRepo.findNearby(anyDouble(), anyDouble(), anyString(), anyDouble(),
+                anyString(), anyInt(), anyDouble(), anyString(), anyInt())).thenReturn(List.of(row));
+
+        List<NearbyStationResponse> out = service.findNearby(
+                37.42, -122.08, PlaceCategory.GAS, "REGULAR", 5000, 48, 20);
+
+        assertThat(out.get(0).crowdsourced()).isFalse();
     }
 
     @Test
     void findNearbyForNonGasDoesNotSeedPrices() {
         when(placeRepo.findNearby(anyDouble(), anyDouble(), anyString(), anyDouble(),
-                anyString(), anyInt(), anyInt())).thenReturn(List.of());
+                anyString(), anyInt(), anyDouble(), anyString(), anyInt())).thenReturn(List.of());
 
         service.findNearby(37.42, -122.08, PlaceCategory.COFFEE, "REGULAR", 5000, 48, 20);
 

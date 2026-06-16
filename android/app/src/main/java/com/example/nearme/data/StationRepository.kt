@@ -36,6 +36,7 @@ class StationRepository(
                 distanceMeters = it.distanceMeters,
                 rating = it.rating, openingHours = it.openingHours,
                 price = it.price, priceReportedAt = it.priceReportedAt,
+                crowdsourced = it.crowdsourced,
                 category = category, cachedAt = now
             )
         }
