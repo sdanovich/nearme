@@ -70,14 +70,19 @@ object BaseUrlProvider {
 
         val anchor = BuildConfig.TUNNEL_DISCOVERY_URL
         if (anchor.isBlank()) return false
-        // Cache-bust: raw.githubusercontent.com is CDN-cached, and a unique query
-        // forces a fresh read so a just-rotated URL is picked up promptly.
+        // NOTE: raw.githubusercontent.com keys its CDN cache on the path and IGNORES
+        // the query string, so this "t" param does NOT force a fresh read — a
+        // just-rotated URL is only visible after the edge object's max-age (≈5 min)
+        // expires. We still send no-cache below and accept that bound; recovery
+        // simply re-fires on subsequent failures until the anchor catches up.
         val anchorUrl = anchor.toHttpUrlOrNull()
             ?.newBuilder()?.addQueryParameter("t", now.toString())?.build()
             ?: return false
 
+        val anchorRequest = Request.Builder().url(anchorUrl)
+            .header("Cache-Control", "no-cache").build()
         return try {
-            discoveryClient.newCall(Request.Builder().url(anchorUrl).build()).execute().use { resp ->
+            discoveryClient.newCall(anchorRequest).execute().use { resp ->
                 val discovered = resp.body?.string()?.trim()?.toHttpUrlOrNull()
                 if (resp.isSuccessful && discovered != null) update(discovered) else false
             }

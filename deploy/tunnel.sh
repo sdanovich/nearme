@@ -11,8 +11,20 @@
 # history. Requires push access to origin (SSH key) and ~/.local/bin/cloudflared.
 #
 # Run:  deploy/tunnel.sh          (Ctrl-C to stop)
-# Env overrides: NEARME_BACKEND_URL, NEARME_TUNNEL_BRANCH, CLOUDFLARED
+# Env overrides: NEARME_BACKEND_URL, NEARME_TUNNEL_BRANCH, CLOUDFLARED, NEARME_TUNNEL_LOCK
 set -uo pipefail
+
+# Single-instance guard. The @reboot crontab entry, the */5 watchdog, and any
+# manual run all invoke this script; without a lock two supervisors could run at
+# once, each spawning its own cloudflared and racing to publish a different URL to
+# the anchor branch (URL flapping, app can't settle). Hold an exclusive lock for
+# the whole process lifetime; a duplicate launch fails the lock and exits cleanly.
+LOCK="${NEARME_TUNNEL_LOCK:-/tmp/nearme-tunnel.lock}"
+exec 9>"$LOCK" || { echo "[tunnel] cannot open lock $LOCK"; exit 1; }
+if ! flock -n 9; then
+    echo "[tunnel] another instance already running (lock $LOCK held); exiting"
+    exit 0
+fi
 
 BACKEND_URL="${NEARME_BACKEND_URL:-http://localhost:28585}"
 BRANCH="${NEARME_TUNNEL_BRANCH:-tunnel-url}"
