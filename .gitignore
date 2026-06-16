@@ -1,0 +1,12 @@
+.gradle/
+build/
+.idea/
+*.iml
+*.log
+local.properties
+android/.gradle/
+android/build/
+android/app/build/
+
+# Local secrets for docker-compose (EIA key, etc.)
+.env

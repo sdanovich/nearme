@@ -1,0 +1,64 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: nearme-postgres
+    environment:
+      POSTGRES_DB: nearmedb
+      POSTGRES_USER: nearme
+      POSTGRES_PASSWORD: nearme
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nearme -d nearmedb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nearme-net
+
+  redis:
+    image: redis:7
+    container_name: nearme-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nearme-net
+
+  backend:
+    build: ./backend
+    container_name: nearme-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/nearmedb
+      SPRING_DATASOURCE_USERNAME: nearme
+      SPRING_DATASOURCE_PASSWORD: nearme
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      # Optional: free EIA key (https://www.eia.gov/opendata/) enables average
+      # gas prices. Set NEARME_EIA_API_KEY in your shell before `docker compose up`.
+      NEARME_EIA_API_KEY: ${NEARME_EIA_API_KEY:-}
+      NEARME_EIA_DUOAREA: ${NEARME_EIA_DUOAREA:-NUS}
+    ports:
+      - "28085:28085"
+    networks:
+      - nearme-net
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  nearme-net:
+    driver: bridge
