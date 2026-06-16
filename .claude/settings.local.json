@@ -93,7 +93,9 @@
       "Bash(adb -s emulator-5554 shell pm grant com.example.nearme android.permission.ACCESS_COARSE_LOCATION)",
       "Bash(nohup /home/vdanovich/Android/Sdk/emulator/emulator -avd Pixel_10_Pro_XL -no-snapshot-load -no-window -no-audio -gpu swiftshader_indirect)",
       "Bash(echo \"launched pid $!\")",
-      "Bash(adb install *)"
+      "Bash(adb install *)",
+      "Bash(git status *)",
+      "Bash(cd *)"
     ]
   }
 }
