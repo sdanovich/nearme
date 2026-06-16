@@ -1,0 +1,33 @@
+# NearMe reverse proxy (Caddy) — RECOMMENDED.
+#
+# Terminates HTTPS for the public API on the standard port (443) and forwards to
+# the backend on the LAN. Caddy obtains and renews a Let's Encrypt certificate
+# automatically, so there's nothing to manage.
+#
+# Prerequisites:
+#   - DNS: danovich.ddns.net resolves to this host's public IP.
+#   - Router: forward WAN tcp/80 AND tcp/443 to the host running Caddy.
+#     (Port 80 is needed for the ACME HTTP challenge / cert issuance.)
+#   - Backend reachable at http://192.168.0.115:28585 from this host.
+#
+# Run:  caddy run --config ./Caddyfile
+#   or install Caddy as a service and place this at /etc/caddy/Caddyfile.
+
+danovich.ddns.net {
+    encode gzip
+
+    # Only the API is exposed; the path is preserved, so a request to
+    # https://danovich.ddns.net/api/stations/nearby reaches the backend as
+    # /api/stations/nearby (its controllers are mapped under /api).
+    handle /api/* {
+        reverse_proxy 192.168.0.115:28585 {
+            # nearby can be slow on first hit (backend Overpass discovery)
+            transport http {
+                read_timeout 60s
+            }
+        }
+    }
+
+    # Anything else gets a 404 rather than reaching the backend.
+    respond 404
+}

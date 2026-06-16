@@ -22,6 +22,8 @@ data class CachedPlace(
     val openingHours: String?,
     val price: Double?,
     val priceReportedAt: String?,
+    // true when the price is a real user report (vs. a seeded regional average)
+    val crowdsourced: Boolean,
     val category: String,
     val cachedAt: Long
 )

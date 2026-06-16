@@ -23,7 +23,7 @@ interface PlaceDao {
     suspend fun clearCategory(category: String)
 }
 
-@Database(entities = [CachedPlace::class], version = 2, exportSchema = false)
+@Database(entities = [CachedPlace::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun placeDao(): PlaceDao
 }

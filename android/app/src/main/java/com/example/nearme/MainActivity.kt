@@ -1,13 +1,16 @@
 package com.example.nearme
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,6 +30,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -245,6 +249,7 @@ fun FuelGradeSelector(selected: String, onSelect: (String) -> Unit) {
 
 @Composable
 fun PlaceCard(p: CachedPlace, isGas: Boolean, onReport: () -> Unit) {
+    val context = LocalContext.current
     ElevatedCard(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
         Row(
             Modifier.fillMaxWidth().padding(16.dp),
@@ -268,17 +273,53 @@ fun PlaceCard(p: CachedPlace, isGas: Boolean, onReport: () -> Unit) {
                 p.openingHours?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall)
                 }
-                p.address?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                // Tappable address: opens the spot in Google Maps (uses the exact
+                // coordinates, so it works even when the address text is fuzzy).
+                p.address?.let { addr ->
+                    Text(
+                        addr,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        textDecoration = TextDecoration.Underline,
+                        modifier = Modifier.clickable {
+                            val uri = Uri.parse(
+                                "https://www.google.com/maps/search/?api=1&query=" +
+                                        "${p.latitude},${p.longitude}"
+                            )
+                            context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                        }
+                    )
+                }
             }
             // Price column ONLY for gas.
             if (isGas) {
+                val hasPrice = p.price != null
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        if (p.price != null) "$${"%.2f".format(p.price)}" else "\u2014",
+                        if (hasPrice) "$${"%.2f".format(p.price)}" else "\u2014",
                         style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        // Dim seeded estimates so real community reports stand out.
+                        color = if (hasPrice && !p.crowdsourced)
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onSurface
                     )
-                    Text(priceAge(p.priceReportedAt), style = MaterialTheme.typography.labelSmall)
+                    if (hasPrice) {
+                        if (p.crowdsourced) {
+                            Text(
+                                "reported ${priceAge(p.priceReportedAt)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium
+                            )
+                        } else {
+                            Text(
+                                "est. average",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                     TextButton(onClick = onReport) { Text("Report") }
                 }
             }
