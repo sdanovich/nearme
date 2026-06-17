@@ -11,7 +11,23 @@ java {
     toolchain { languageVersion = JavaLanguageVersion.of(21) }
 }
 
-repositories { mavenCentral() }
+repositories {
+    mavenCentral()
+    // Local platform-stack snapshots, for dev before/without GitHub Packages creds.
+    mavenLocal()
+    // Shared auth artifacts (com.danovich.platform:*). Only added when GitHub
+    // Packages credentials are present (CI, or ~/.gradle/gradle.properties), so a
+    // clone without a token still builds against mavenLocal.
+    def gprUser = findProperty('gpr.user') ?: System.getenv('GITHUB_ACTOR')
+    def gprKey = findProperty('gpr.key') ?: System.getenv('GITHUB_TOKEN')
+    if (gprUser && gprKey) {
+        maven {
+            name = 'GitHubPackages'
+            url = 'https://maven.pkg.github.com/sdanovich/platform-stack'
+            credentials { username = gprUser; password = gprKey }
+        }
+    }
+}
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
@@ -28,11 +44,11 @@ dependencies {
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'
 
-    // JWT (client-credentials auth). jjwt issues + verifies HS256 tokens; a
-    // lightweight servlet filter enforces them, so no Spring Security needed.
-    implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
-    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
-    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'
+    // Client-credentials JWT auth from the shared platform-stack module, consumed
+    // as a published artifact (JwtService + enforcing servlet filter + POST
+    // /api/auth/token, wired by its Spring autoconfiguration). Brings jjwt
+    // transitively. SNAPSHOT tracks the latest fix published from platform-stack.
+    implementation 'com.danovich.platform:backend-auth:0.1.0-SNAPSHOT'
 
     runtimeOnly 'org.postgresql:postgresql'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
