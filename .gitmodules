@@ -1,0 +1,3 @@
+[submodule "vendor/platform-stack"]
+	path = vendor/platform-stack
+	url = git@github.com:sdanovich/platform-stack

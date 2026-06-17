@@ -17,9 +17,10 @@ data class TokenResponse(
 )
 
 /**
- * Token exchange endpoint. Used by [TokenProvider] over a plain (auth-free)
- * OkHttp client, so calls here never recurse back through the auth interceptor.
- * Synchronous Call — it's invoked from within an OkHttp interceptor/authenticator.
+ * Token exchange endpoint. Called by the project's TokenProvider (in [ApiClient])
+ * over a plain (auth-free) OkHttp client, so calls here never recurse back through
+ * the bearer/refresh interceptors. Synchronous Call — it's invoked from within an
+ * OkHttp interceptor thread.
  */
 interface AuthApi {
     @POST("/api/auth/token")

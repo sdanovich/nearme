@@ -113,6 +113,11 @@ dependencies {
     implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
+    // Shared client-credentials auth interceptors (bearer + 401 refresh + token
+    // store) from platform-stack, consumed as a published artifact; this app
+    // supplies the TokenProvider. SNAPSHOT tracks the latest published fix.
+    implementation("com.danovich.platform:android-auth:0.1.0-SNAPSHOT")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
