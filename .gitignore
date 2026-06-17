@@ -14,6 +14,8 @@ android/app/build/
 # Release signing — keep the keystore and its passwords out of version control
 android/keystore.properties
 android/release.keystore
+*.keystore
+*.jks
 
 # Built APKs (copied to repo root for convenience) — not source
 *.apk
