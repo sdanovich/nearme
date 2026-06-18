@@ -1,53 +1,19 @@
+# NearMe's backend only. Postgres + Redis are no longer owned here — they live in
+# the shared infra stack (~/projects/infra) on the external `shared-net` network.
+# The backend reaches them by service name (postgres/redis). NearMe owns just its
+# own `nearmedb` database on that shared server.
+#
+#   (start the shared infra first:  cd ../infra && docker compose up -d)
+#   docker compose up -d
 services:
-  postgres:
-    image: postgis/postgis:16-3.4
-    container_name: nearme-postgres
-    # Restart on crash and on Docker daemon start (i.e. after a host reboot),
-    # unless the container was explicitly stopped.
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: nearmedb
-      POSTGRES_USER: nearme
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nearme -d nearmedb"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - nearme-net
-
-  redis:
-    image: redis:7
-    container_name: nearme-redis
-    restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - nearme-net
-
   backend:
     build: ./backend
     container_name: nearme-backend
-    # On a host reboot the daemon starts containers per their restart policy but
-    # does NOT honor depends_on health ordering; if backend starts before
-    # postgres is ready it exits and this policy restarts it until the DB is up.
+    # Postgres/Redis are external (a separate compose project), so cross-project
+    # depends_on health-gating isn't possible. The restart policy covers ordering:
+    # if the backend starts before the DB is reachable it exits and is restarted
+    # until the DB is up.
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/nearmedb
       SPRING_DATASOURCE_USERNAME: nearme
@@ -66,12 +32,8 @@ services:
     ports:
       - "28585:28585"
     networks:
-      - nearme-net
-
-volumes:
-  postgres-data:
-  redis-data:
+      - shared-net
 
 networks:
-  nearme-net:
-    driver: bridge
+  shared-net:
+    external: true
