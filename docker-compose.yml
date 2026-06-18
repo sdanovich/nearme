@@ -10,10 +10,18 @@ services:
     build: ./backend
     container_name: nearme-backend
     # Postgres/Redis are external (a separate compose project), so cross-project
-    # depends_on health-gating isn't possible. The restart policy covers ordering:
-    # if the backend starts before the DB is reachable it exits and is restarted
-    # until the DB is up.
+    # depends_on health-gating isn't possible. Instead the entrypoint below blocks
+    # until both accept connections before starting the app (no crash-looping); the
+    # restart policy is the backstop. The base image ships bash (/dev/tcp).
     restart: unless-stopped
+    entrypoint:
+      - /usr/bin/bash
+      - -c
+      - |
+        until (exec 3<>/dev/tcp/postgres/5432) 2>/dev/null; do echo 'waiting for postgres...'; sleep 2; done
+        until (exec 3<>/dev/tcp/redis/6379) 2>/dev/null; do echo 'waiting for redis...'; sleep 2; done
+        echo 'postgres + redis reachable — starting'
+        exec java -jar app.jar
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/nearmedb
       SPRING_DATASOURCE_USERNAME: nearme
